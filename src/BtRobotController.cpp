@@ -14,28 +14,37 @@
 
 static const char *TAG = "BTROBOTCONTROLLER";
 
+BtRobotController& BtRobotController::getBtRobotController()
+{
+    static BtRobotController instance;
+    ESP_LOGI(TAG, "Returning: %p", &instance);
+    return instance;
+}
+
 BtRobotController::BtRobotController()
 {
     lastCharacteristic = 0x00;
+
+    static const ble_uuid128_t SERVICE = BLE_UUID128_INIT(0x0f, 0x4b, 0xe0, 0x8b, 0x89, 0x3c, 0x40, 0x97, 0xa3, 0xc5, 0x5e, 0x7c, 0xfc, 0xd2, 0x73, 0x70); //"0f4be08b-893c-4097-a3c5-5e7cfcd27370"
+
+    gatt_svcs[0] = {
+        .type = BLE_GATT_SVC_TYPE_PRIMARY,
+        .uuid = &SERVICE.u,
+        .characteristics = characteristics
+    };
+
+    gatt_svcs[1] = {0};
 }
 
 void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServicesConfig[], uint32_t lenServicesConfig)
 {
-    static const ble_uuid128_t SERVICE = BLE_UUID128_INIT(0x0f, 0x4b, 0xe0, 0x8b, 0x89, 0x3c, 0x40, 0x97, 0xa3, 0xc5, 0x5e, 0x7c, 0xfc, 0xd2, 0x73, 0x70); //"0f4be08b-893c-4097-a3c5-5e7cfcd27370"
-
-    if (lenServicesConfig > BTROBOT_CONFIG_MAX_CHARS)
+    ESP_LOGI(TAG, "Robot: %p", this);
+    // >= due to the last item being the {0}
+    if (lenServicesConfig >= BTROBOT_CONFIG_MAX_CHARS)
     {
         ESP_LOGE(TAG, "Error Maximum characterics are %d, provided: %lu", BTROBOT_CONFIG_MAX_CHARS, lenServicesConfig);
         return;
     }
-
-    struct ble_gatt_chr_def characteristics[BTROBOT_CONFIG_MAX_CHARS] = {0};
-
-    const static struct ble_gatt_svc_def gatt_svcs[] = {
-        {.type = BLE_GATT_SVC_TYPE_PRIMARY,
-         .uuid = &SERVICE.u,
-         .characteristics = characteristics},
-        {0}};
 
     // Handle robot Name
     if (strlen(robotName) > BTROBOT_ROBOTNAME_MAXLEN - 1)
@@ -45,10 +54,12 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
     }
     strcpy(internalRobotName, robotName);
 
-    ESP_LOGE(TAG,"Starting Filling chars..\n");
+    ESP_LOGI(TAG,"Starting Filling chars..");
+
     // Generate Bluetooth's Structure.
     for (uint32_t i = 0; i < lenServicesConfig; i++)
     {
+        ESP_LOGE(TAG,"Adding characteristic %lu, cb: %p", i, btServicesConfig[i].callback);
         generateUUID();
         characteristics[i] =
             {
@@ -56,16 +67,18 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
                 .access_cb = &BtRobotController::commonCallback, // Ahora se espera una funcion super chunga de gatt, tenemos que
                 // idear una forma de que haya un callback mas sencillo para el usuario.
                 .arg = (void *)i,
-                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE | BLE_GATT_CHR_F_NOTIFY,
-                .min_key_size = 16U};
+                .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
+                .min_key_size = 16U
+            };
+        
+        callbackMap[i] = btServicesConfig[i].callback;
     }
     characteristics[lenServicesConfig] = {0};
 
-    ESP_LOGE(TAG,"Internal Init\n");
+    gatt_svcs[0].characteristics = characteristics;
+
+
     internalBtInit();
-
-    ESP_LOGE(TAG,"Fin Init\n");
-
     ble_gatts_count_cfg(gatt_svcs);                         // config all the gatt services that wanted to be used.
     ble_gatts_add_svcs(gatt_svcs);                          // queues all services.
 }
@@ -87,9 +100,39 @@ void BtRobotController::internalBtInit()
     ble_svc_gatt_init();                                             // initailize the gatt service.
 }
 
+uint32_t BtRobotController::runCallback(uint32_t id, void * data, uint32_t len, BtRobotOperationType operation )
+{
+    ESP_LOGI(TAG, "Robot: %p", this);
+    ESP_LOGI(TAG, "CallbackMap (%lu): %p", id, callbackMap[id]);
+
+    if (callbackMap[id] == nullptr)
+    {
+        ESP_LOGE(TAG, "Error callback not defined! \n");
+        return -1;
+    }
+
+    return callbackMap[id](data,len,operation);
+}
+
 int BtRobotController::commonCallback(uint16_t conn_handle, uint16_t attr_handle,
                                       struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
-    ESP_LOGE(TAG, "Callback arg: %d\n", (int)arg);
+    BtRobotController& controller = BtRobotController::getBtRobotController();
+    uint32_t id = (int)arg;
+
+    ESP_LOGI(TAG, "Callback arg: %d\n", (int)arg);
+
+    switch(ctxt->op)
+    {
+    case BLE_GATT_ACCESS_OP_READ_CHR:
+        controller.runCallback(id, nullptr, 0, BTROBOT_OP_READ);
+        break;
+    case BLE_GATT_ACCESS_OP_WRITE_CHR:
+        break;
+    case BLE_GATT_ACCESS_OP_READ_DSC:
+        break;
+    case BLE_GATT_ACCESS_OP_WRITE_DSC:
+        break;
+    }
     return 0;
 }
