@@ -15,6 +15,8 @@
 #define BTROBOT_ROBOTNAME_MAXLEN 25
 #define BTROBOT_CONFIG_MAX_CHARS 30
 
+#define BTROBOT_MAX_DATA_LEN 100
+
 #define BTROBOT_CONFIG_NAME_MAXLEN 15
 
 enum BtRobotConfigType{
@@ -43,25 +45,37 @@ class BtRobotController
 {
 
 public:
-    static BtRobotController& getBtRobotController();   
+    static BtRobotController& getBtRobotController();
 
     void Init(char * robotName, struct BtRobotConfiguration btServicesConfig[], uint32_t lenServicesConfig);
 
     uint32_t runCallback(uint32_t id, void * data, uint32_t len, BtRobotOperationType operation);
 
+    static void data_op_read(void * data, uint32_t len);
+
 private:
+    // Make private so there is only one controller created in getBtRobotController()
     BtRobotController();
+
+    // Disable non-basic constructors.
     BtRobotController(const BtRobotController&) = delete;
     BtRobotController(BtRobotController&&) = delete;
     BtRobotController& operator=(const BtRobotController&) = delete;
     BtRobotController& operator=(BtRobotController&&) = delete;
 
 
+
+    // Interchange data
+    static uint8_t ReadData[BTROBOT_MAX_DATA_LEN];
+    static uint32_t ReadDataLen;
+
+    static uint8_t WriteData[BTROBOT_MAX_DATA_LEN];
+    static uint32_t WriteDataLen;
+
     /**
      * Initialize the basic nimBLE features of ESP32
     */
     void internalBtInit();
-
 
     char internalRobotName[BTROBOT_ROBOTNAME_MAXLEN];
 
@@ -78,11 +92,10 @@ private:
     static int commonCallback(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-
-
     robotUserCallbackFn callbackMap[BTROBOT_CONFIG_MAX_CHARS] = {nullptr};
 
     ble_uuid128_t CHARACTERISTIC_UUID[BTROBOT_CONFIG_MAX_CHARS];
+
 
 };
 

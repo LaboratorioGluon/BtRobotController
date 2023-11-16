@@ -14,10 +14,15 @@
 
 static const char *TAG = "BTROBOTCONTROLLER";
 
+uint8_t BtRobotController::ReadData[BTROBOT_MAX_DATA_LEN] = {0};
+uint32_t BtRobotController::ReadDataLen = 0;
+
+uint8_t BtRobotController::WriteData[BTROBOT_MAX_DATA_LEN] = {0};
+uint32_t BtRobotController::WriteDataLen = 0;
+
 BtRobotController& BtRobotController::getBtRobotController()
 {
     static BtRobotController instance;
-    ESP_LOGI(TAG, "Returning: %p", &instance);
     return instance;
 }
 
@@ -64,13 +69,12 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
         characteristics[i] =
             {
                 .uuid = &(CHARACTERISTIC_UUID[i].u),
-                .access_cb = &BtRobotController::commonCallback, // Ahora se espera una funcion super chunga de gatt, tenemos que
-                // idear una forma de que haya un callback mas sencillo para el usuario.
+                .access_cb = &BtRobotController::commonCallback,
                 .arg = (void *)i,
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
                 .min_key_size = 16U
             };
-        
+
         callbackMap[i] = btServicesConfig[i].callback;
     }
     characteristics[lenServicesConfig] = {0};
@@ -94,17 +98,21 @@ ble_uuid128_t BtRobotController::generateUUID()
 
 void BtRobotController::internalBtInit()
 {
-    nimble_port_init();                                              // nimble library initialization.
+    nimble_port_init();
+    ble_hs_cfg.sm_bonding=1;                                              // nimble library initialization.
+    ble_hs_cfg.sm_mitm = 1;
+    ble_hs_cfg.sm_sc = 1;
+    ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_DISP_ONLY;
+    ble_hs_cfg.sm_our_key_dist |= BLE_SM_PAIR_KEY_DIST_ENC;
+    ble_hs_cfg.sm_their_key_dist |= BLE_SM_PAIR_KEY_DIST_ENC;
     ESP_ERROR_CHECK(ble_svc_gap_device_name_set(internalRobotName)); // set BLE name.
     ble_svc_gap_init();                                              // initialize the gap service.
     ble_svc_gatt_init();                                             // initailize the gatt service.
 }
 
 uint32_t BtRobotController::runCallback(uint32_t id, void * data, uint32_t len, BtRobotOperationType operation )
+//uint32_t BtRobotController::runCallback(uint32_t id, struct ble_gatt_access_ctxt *ctxt)
 {
-    ESP_LOGI(TAG, "Robot: %p", this);
-    ESP_LOGI(TAG, "CallbackMap (%lu): %p", id, callbackMap[id]);
-
     if (callbackMap[id] == nullptr)
     {
         ESP_LOGE(TAG, "Error callback not defined! \n");
@@ -121,13 +129,23 @@ int BtRobotController::commonCallback(uint16_t conn_handle, uint16_t attr_handle
     uint32_t id = (int)arg;
 
     ESP_LOGI(TAG, "Callback arg: %d\n", (int)arg);
-
+    uint8_t om_len;
     switch(ctxt->op)
     {
     case BLE_GATT_ACCESS_OP_READ_CHR:
         controller.runCallback(id, nullptr, 0, BTROBOT_OP_READ);
+        os_mbuf_append(ctxt->om, ReadData, ReadDataLen);
         break;
     case BLE_GATT_ACCESS_OP_WRITE_CHR:
+        om_len = OS_MBUF_PKTLEN(ctxt->om);
+        memset(WriteData, 0, sizeof(WriteData));
+        memcpy(WriteData, (char *)ctxt->om->om_data, om_len);
+        WriteDataLen = om_len;
+        //WriteData[om_len] = '\0';
+        // os_mbuf_free(ctxt->om);
+        ESP_LOGI(TAG, "Valor entrante: %d\n", WriteData[0]);
+        controller.runCallback(id, WriteData, WriteDataLen, BTROBOT_OP_WRITE);
+        
         break;
     case BLE_GATT_ACCESS_OP_READ_DSC:
         break;
@@ -135,4 +153,19 @@ int BtRobotController::commonCallback(uint16_t conn_handle, uint16_t attr_handle
         break;
     }
     return 0;
+}
+
+
+void BtRobotController::data_op_read(void * data, uint32_t len)
+{
+    if( len < BTROBOT_MAX_DATA_LEN )
+    {
+        memcpy(&ReadData, data, len);
+        ReadDataLen = len;
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Received data len bigger than %d", BTROBOT_MAX_DATA_LEN);
+    }
+
 }
