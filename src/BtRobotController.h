@@ -12,8 +12,11 @@
 #include "services/gatt/ble_svc_gatt.h"
 #include "esp_bt.h"
 
-#define BTROBOT_ROBOTNAME_MAXLEN 25
+#ifndef BTROBOT_ROBOTNAME_MAXLEN
+    #define BTROBOT_ROBOTNAME_MAXLEN 25
+#endif 
 #define BTROBOT_CONFIG_MAX_CHARS 30
+#define BTROBOT_CONFIG_MAX_DESCRIPTORS 5
 
 #define BTROBOT_MAX_DATA_LEN 100
 
@@ -53,6 +56,9 @@ public:
 
     static void data_op_read(void * data, uint32_t len);
 
+    uint8_t numUserCharacteristics;
+    char characteristicNames[BTROBOT_CONFIG_MAX_CHARS][BTROBOT_CONFIG_NAME_MAXLEN];
+
 private:
     // Make private so there is only one controller created in getBtRobotController()
     BtRobotController();
@@ -80,7 +86,6 @@ private:
     char internalRobotName[BTROBOT_ROBOTNAME_MAXLEN];
 
     /***** BLE Items *****/
-
     uint8_t lastCharacteristic;
 
     // Only one service, the second one is the {0}
@@ -92,10 +97,15 @@ private:
     static int commonCallback(uint16_t conn_handle, uint16_t attr_handle,
                                struct ble_gatt_access_ctxt *ctxt, void *arg);
 
+    static int configCallback(uint16_t conn_handle, uint16_t attr_handle,
+                               struct ble_gatt_access_ctxt *ctxt, void *arg);
+
     robotUserCallbackFn callbackMap[BTROBOT_CONFIG_MAX_CHARS] = {nullptr};
 
     ble_uuid128_t CHARACTERISTIC_UUID[BTROBOT_CONFIG_MAX_CHARS];
+    ble_uuid128_t DESCRIPTORS_UUID[BTROBOT_CONFIG_MAX_CHARS][BTROBOT_CONFIG_MAX_DESCRIPTORS];
 
+    struct BtRobotConfiguration userConfigurations[BTROBOT_CONFIG_MAX_CHARS];
 
 };
 

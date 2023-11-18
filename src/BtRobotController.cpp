@@ -61,9 +61,18 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
 
     ESP_LOGI(TAG,"Starting Filling chars..");
 
+    numUserCharacteristics = lenServicesConfig;
+
     // Generate Bluetooth's Structure.
     for (uint32_t i = 0; i < lenServicesConfig; i++)
     {
+        // Store locally
+        //userConfigurations[i] = btServicesConfig[i];
+        if (strlen(btServicesConfig[i].paramName) < BTROBOT_CONFIG_NAME_MAXLEN)
+        {
+            strcpy(characteristicNames[i], btServicesConfig[i].paramName);
+        }
+        
         ESP_LOGE(TAG,"Adding characteristic %lu, cb: %p", i, btServicesConfig[i].callback);
         generateUUID();
         characteristics[i] =
@@ -71,13 +80,38 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
                 .uuid = &(CHARACTERISTIC_UUID[i].u),
                 .access_cb = &BtRobotController::commonCallback,
                 .arg = (void *)i,
+                /*.descriptors = (struct ble_gatt_dsc_def[]){
+                    { // Nombre de la característica.
+                        .uuid = &DESCRIPTORS_UUID[i][0].u,
+                        .att_flags = BLE_ATT_F_READ,
+                        .min_key_size = 16U,
+                        .arg = 
+                        .access_cb = &BtRobotController::commonCallback,
+                    },
+                    { // Tipo de la característica.
+                        .uuid = &DESCRIPTORS_UUID[i][1].u,
+                        .att_flags = BLE_ATT_F_READ,
+                        .min_key_size = 16U,
+                        .access_cb = &BtRobotController::commonCallback,
+                    },
+                    {0}},*/
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
-                .min_key_size = 16U
+                .min_key_size = 16U,
             };
 
         callbackMap[i] = btServicesConfig[i].callback;
     }
-    characteristics[lenServicesConfig] = {0};
+
+    generateUUID();
+    characteristics[lenServicesConfig] = {
+        .uuid = &(CHARACTERISTIC_UUID[lenServicesConfig].u),
+        .access_cb = &BtRobotController::configCallback,
+        .arg = (void *)0,
+        .flags = BLE_GATT_CHR_F_READ ,
+        .min_key_size = 16U,
+    };
+
+    characteristics[lenServicesConfig+1] = {0};
 
     gatt_svcs[0].characteristics = characteristics;
 
@@ -91,6 +125,12 @@ ble_uuid128_t BtRobotController::generateUUID()
 {
     CHARACTERISTIC_UUID[lastCharacteristic] =
         BLE_UUID128_INIT(0x3f, 0xd3, 0x2b, 0xe3, 0xad, 0x57, 0x4f, 0x3a, 0xad, 0xca, 0xb9, 0x3f, 0x14, 0x79, 0x86, lastCharacteristic);
+
+    for( uint8_t i = 0; i < BTROBOT_CONFIG_MAX_DESCRIPTORS; i++)
+    {
+        DESCRIPTORS_UUID[lastCharacteristic][i] =
+            BLE_UUID128_INIT(0x3f, 0xd3, 0x2b, 0xe3, 0xad, 0x57, 0x4f, 0x3a, 0xad, 0xca, 0xb9, 0x3f, 0x14, 0x79, i, lastCharacteristic);
+    }
 
     lastCharacteristic++;
     return CHARACTERISTIC_UUID[lastCharacteristic];
@@ -141,11 +181,46 @@ int BtRobotController::commonCallback(uint16_t conn_handle, uint16_t attr_handle
         memset(WriteData, 0, sizeof(WriteData));
         memcpy(WriteData, (char *)ctxt->om->om_data, om_len);
         WriteDataLen = om_len;
-        //WriteData[om_len] = '\0';
-        // os_mbuf_free(ctxt->om);
         ESP_LOGI(TAG, "Valor entrante: %d\n", WriteData[0]);
         controller.runCallback(id, WriteData, WriteDataLen, BTROBOT_OP_WRITE);
         
+        break;
+    case BLE_GATT_ACCESS_OP_READ_DSC:
+        break;
+    case BLE_GATT_ACCESS_OP_WRITE_DSC:
+        break;
+    }
+    return 0;
+}
+
+int BtRobotController::configCallback(uint16_t conn_handle, uint16_t attr_handle,
+                                      struct ble_gatt_access_ctxt *ctxt, void *arg)
+{
+    BtRobotController& controller = BtRobotController::getBtRobotController();
+    uint32_t id = (int)arg;
+
+    ESP_LOGI(TAG, "ConfigCallback arg: %d\n", (int)arg);
+    uint8_t om_len;
+
+    char configData[BTROBOT_CONFIG_MAX_CHARS*BTROBOT_CONFIG_NAME_MAXLEN];
+    char *configDataPointer = configData;
+
+    for( uint32_t i = 0; i < controller.numUserCharacteristics; i++)
+    {
+        //configDataLen += strlen(controller.characteristicNames[i]) + 1;
+        strcpy(configDataPointer, controller.characteristicNames[i]);
+        configDataPointer += strlen(controller.characteristicNames[i]);
+        *configDataPointer = ';';
+        configDataPointer++;
+    }
+    //  "NOMBRE_1§Nombre_2§Nombre_3§": (len(nombre) + 1 )*numChar
+
+    switch(ctxt->op)
+    {
+    case BLE_GATT_ACCESS_OP_READ_CHR:
+        os_mbuf_append(ctxt->om, configData, strlen(configData));
+        break;
+    case BLE_GATT_ACCESS_OP_WRITE_CHR:
         break;
     case BLE_GATT_ACCESS_OP_READ_DSC:
         break;
