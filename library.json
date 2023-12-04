@@ -1,0 +1,21 @@
+{
+    "name": "BTRobotController",
+    "version": "0.1.0",
+    "description": "A easy to implement robot controller using bluetooth",
+    "keywords": "bluetooth, robot",
+    "repository":
+    {
+        "type": "git",
+        "url": "https://github.com/LaboratorioGluon/BtRobotController"
+    },
+    "authors":
+    [
+        {
+            "name": "Laboratorio Gluon",
+            "email": "laboratoriogluon@gmail.com",
+            "url": "www.twitch.tv/labgluon"
+        }
+    ],
+    "frameworks": ["espidf"],
+    "platforms": ["espressif32"] 
+}

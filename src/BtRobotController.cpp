@@ -62,12 +62,15 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
         .uuid = &(configChrNames.u),
         .access_cb = &BtRobotController::configCallback,
         .arg = (void *)1,
+        .descriptors = nullptr,
         .flags = BLE_GATT_CHR_F_READ,
-        .min_key_size = 16};
+        .min_key_size = 16,
+        .val_handle = nullptr};
 
     gatt_svcs[0] = {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &configService.u,
+        .includes = nullptr,
         .characteristics = commonCharacteristics};
 
     // User service
@@ -75,9 +78,11 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
     gatt_svcs[1] = {
         .type = BLE_GATT_SVC_TYPE_PRIMARY,
         .uuid = &userService.u,
+        .includes = nullptr,
         .characteristics = userCharacteristics};
 
-    gatt_svcs[2] = {0};
+    gatt_svcs[2] = {};
+    gatt_svcs[2].uuid = 0;
 
     numUserCharacteristics = lenServicesConfig;
 
@@ -101,6 +106,7 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
                 .descriptors = userDescriptors[i],
                 .flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE,
                 .min_key_size = 16U,
+                .val_handle = nullptr
             };
 
         // Type of characteristic.
@@ -116,13 +122,20 @@ void BtRobotController::Init(char *robotName, struct BtRobotConfiguration btServ
         callbackMap[i] = btServicesConfig[i].callback;
     }
 
-    userCharacteristics[lenServicesConfig] = {0};
+    userCharacteristics[lenServicesConfig] = {};
+    userCharacteristics[lenServicesConfig].uuid = NULL;
 
     gatt_svcs[1].characteristics = userCharacteristics;
 
     internalBtInit();
     ble_gatts_count_cfg(gatt_svcs); // config all the gatt services that wanted to be used.
     ble_gatts_add_svcs(gatt_svcs);  // queues all services.
+
+    ble_hs_cfg.sync_cb = BtRobotController::ble_app_on_sync;
+
+    nimble_port_freertos_init(BtRobotController::host_task);
+
+    configure_ble_max_power();
 }
 
 ble_uuid128_t BtRobotController::generateUUID()
@@ -201,10 +214,9 @@ int BtRobotController::configCallback(uint16_t conn_handle, uint16_t attr_handle
                                       struct ble_gatt_access_ctxt *ctxt, void *arg)
 {
     BtRobotController &controller = BtRobotController::getBtRobotController();
-    uint32_t id = (int)arg;
+    //uint32_t id = (int)arg;
 
     ESP_LOGI(TAG, "ConfigCallback arg: %d\n", (int)arg);
-    uint8_t om_len;
 
     char configData[BTROBOT_CONFIG_MAX_CHARS * BTROBOT_CONFIG_NAME_MAXLEN];
     char *configDataPointer = configData;
@@ -242,8 +254,8 @@ int BtRobotController::typeCallback(uint16_t conn_handle, uint16_t attr_handle,
     uint32_t id = (int)arg;
 
     ESP_LOGI(TAG, "typeCallback arg: %d\n", (int)arg);
-    uint8_t om_len;
-    
+
+/*    
     uint8_t *p = (uint8_t*)&controller.userConfiguration[id].dataConfig;
     ESP_LOGI(TAG,"Data: \n");
     for(int i = 0; i < sizeof(struct dataType); i++)
@@ -251,6 +263,7 @@ int BtRobotController::typeCallback(uint16_t conn_handle, uint16_t attr_handle,
         ESP_LOGI(TAG,"%X ", *p++);
     }
     ESP_LOGI(TAG,"End Data: \n");
+*/
     switch (ctxt->op)
     {
     case BLE_GATT_ACCESS_OP_READ_DSC:
@@ -270,5 +283,186 @@ void BtRobotController::data_op_read(void *data, uint32_t len)
     else
     {
         ESP_LOGE(TAG, "Received data len bigger than %d", BTROBOT_MAX_DATA_LEN);
+    }
+}
+
+
+uint8_t ble_addr_type;
+
+/**
+ * @brief Function to start advertising the BLE services.
+ *
+ * This function configures the advertisement fields and parameters, then starts advertising the BLE services.
+ *
+ * @note Make sure to include the necessary header files and dependencies in your project.
+ *
+ * @note The 'ble_svc_gap_device_name()' function should be defined in your project to retrieve the BLE device name.
+ *
+ * @param ble_addr_type The BLE address type to be used for advertising.
+ */
+void BtRobotController::ble_app_advertise(void)
+{
+    struct ble_hs_adv_fields fields;
+    memset(&fields, 0, sizeof(fields));
+    fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_DISC_LTD;
+    fields.tx_pwr_lvl_is_present = 1;
+    fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
+    fields.name = (uint8_t *)ble_svc_gap_device_name();
+    fields.name_len = strlen(ble_svc_gap_device_name());
+    fields.name_is_complete = 1;
+    ble_gap_adv_set_fields(&fields);
+    struct ble_gap_adv_params adv_params;
+    memset(&adv_params, 0, sizeof(adv_params));
+    adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
+    adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    ble_gap_adv_start(ble_addr_type, NULL, BLE_HS_FOREVER, &adv_params, BtRobotController::ble_gap_event, NULL);
+}
+
+
+int BtRobotController::ble_gap_event(struct ble_gap_event *event, void *arg)
+{
+    int rc;
+    ESP_LOGI("GAP", "BLE GAP EVENT :%d", event->type);
+    switch (event->type)
+    {
+    case BLE_GAP_EVENT_CONNECT:
+        ESP_LOGI("GAP", "BLE GAP EVENT CONNECT %s", event->connect.status == 0 ? "OK!" : "FAILED!");
+        if (event->connect.status != 0)
+        {
+            // start advertising again!
+            BtRobotController::ble_app_advertise();
+        }
+        ble_gap_security_initiate(event->connect.conn_handle);
+        break;
+    case BLE_GAP_EVENT_DISCONNECT:
+        ESP_LOGI("GAP", "BLE GAP EVENT");
+        ble_app_advertise();
+        break;
+    case BLE_GAP_EVENT_ADV_COMPLETE:
+        ESP_LOGI("GAP", "BLE GAP EVENT");
+        ble_app_advertise();
+        break;
+    case BLE_GAP_EVENT_SUBSCRIBE:
+        ESP_LOGI("GAP", "BLE GAP EVENT");
+        break;
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+        ESP_LOGI("GAP", "PASSKEY_ACTION_EVENT started");
+        struct ble_sm_io pkey = {};
+
+        if (event->passkey.params.action == BLE_SM_IOACT_DISP) {
+            pkey.action = event->passkey.params.action;
+            pkey.passkey = 123456; // This is the passkey to be entered on peer
+            ESP_LOGI("GAP", "Enter passkey %" PRIu32 "on the peer side", pkey.passkey);
+            rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI("GAP", "ble_sm_inject_io result: %d", rc);
+        } /*else if (event->passkey.params.action == BLE_SM_IOACT_NUMCMP) {
+            ESP_LOGI("GAP", "Passkey on device's display: %" PRIu32 , event->passkey.params.numcmp);
+            ESP_LOGI("GAP", "Accept or reject the passkey through console in this format -> key Y or key N");
+            pkey.action = event->passkey.params.action;
+            pkey.numcmp_accept = 0;
+            rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI("GAP", "ble_sm_inject_io result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_OOB) {
+            static uint8_t tem_oob[16] = {0};
+            pkey.action = event->passkey.params.action;
+            for (int i = 0; i < 16; i++) {
+                pkey.oob[i] = tem_oob[i];
+            }
+            rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI("GAP", "ble_sm_inject_io result: %d", rc);
+        } else if (event->passkey.params.action == BLE_SM_IOACT_INPUT) {
+            ESP_LOGI("GAP", "Enter the passkey through console in this format-> key 123456");
+            pkey.action = event->passkey.params.action;
+            if (scli_receive_key(&key)) {
+                pkey.passkey = key;
+            } else {
+                pkey.passkey = 0;
+                ESP_LOGE("GAP", "Timeout! Passing 0 as the key");
+            }
+            rc = ble_sm_inject_io(event->passkey.conn_handle, &pkey);
+            ESP_LOGI("GAP", "ble_sm_inject_io result: %d", rc);
+        }*/
+        
+        break;
+    }
+    return 0;
+}
+
+
+void BtRobotController::ble_app_on_sync(void)
+{
+    // ble_addr_t addr;
+    // ble_hs_id_gen_rnd(1, &addr);
+    // ble_hs_id_set_rnd(addr.val);
+    ble_hs_id_infer_auto(0, &ble_addr_type); // determines automatic address.
+    BtRobotController::ble_app_advertise();  // start advertising the services -->
+}
+
+
+void BtRobotController::host_task(void *param)
+{
+    nimble_port_run();
+}
+
+
+// Función para configurar BLE a máxima potencia
+void BtRobotController::configure_ble_max_power()
+{
+    // Configuración de potencia de transmisión para cada tipo
+    esp_err_t result;
+
+    result = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_CONN_HDL0, ESP_PWR_LVL_P7);
+    if (result == ESP_OK)
+    {
+        ESP_LOGI("power", "Configured ESP_BLE_PWR_TYPE_CONN_HDL0 to maximum");
+    }
+    else
+    {
+        ESP_LOGE("power", "Failed to configure ESP_BLE_PWR_TYPE_CONN_HDL0");
+    }
+
+    result = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_CONN_HDL1, ESP_PWR_LVL_P7);
+    if (result == ESP_OK)
+    {
+        ESP_LOGI("power", "Configured ESP_BLE_PWR_TYPE_CONN_HDL1 to maximum");
+    }
+    else
+    {
+        ESP_LOGE("power", "Failed to configure ESP_BLE_PWR_TYPE_CONN_HDL1");
+    }
+
+    // Repite este patrón para otros tipos de potencia
+
+    // Finalmente, configura la potencia de publicidad
+    result = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P7);
+    if (result == ESP_OK)
+    {
+        ESP_LOGI("power", "Configured ESP_BLE_PWR_TYPE_ADV to maximum");
+    }
+    else
+    {
+        ESP_LOGE("power", "Failed to configure ESP_BLE_PWR_TYPE_ADV");
+    }
+
+    // Finalmente, configura la potencia de publicidad
+    result = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_SCAN, ESP_PWR_LVL_P7);
+    if (result == ESP_OK)
+    {
+        ESP_LOGI("power", "Configured ESP_BLE_PWR_TYPE_SCAN to maximum");
+    }
+    else
+    {
+        ESP_LOGE("power", "Failed to configure ESP_BLE_PWR_TYPE_SCAN");
+    }
+
+    // Finalmente, configura la potencia de publicidad
+    result = esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_DEFAULT, ESP_PWR_LVL_P7);
+    if (result == ESP_OK)
+    {
+        ESP_LOGI("power", "Configured ESP_BLE_PWR_TYPE_DEFAULT to maximum");
+    }
+    else
+    {
+        ESP_LOGE("power", "Failed to configure ESP_BLE_PWR_TYPE_DEFAULT");
     }
 }
