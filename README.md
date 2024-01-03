@@ -4,10 +4,21 @@ An ESP32 library to automatically create the services and characteristics to wor
 
 The user shall only define the type of data that the app will exchange and create the corresponding callbacks.
 
+## Requirements
+
+One shall add the following configuration to the esp-idf configuration
+```
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+```
 
 ## Example
 
 ```c
+
+// Definimos nuestro Bluetooth Robot Controller
+BtRobotController& robotCtrl = BtRobotController::getBtRobotController();
 
 uint32_t callBack1(void * data, uint32_t len, BtRobotOperationType operation)
 {
@@ -62,12 +73,13 @@ struct BtRobotConfiguration robotConfig[]={
     },
 
 
+
 extern "C" void app_main()
 {
     nvs_flash_init();
     
     // Initialize the bluetooth with name "MY_BT_DEVICE" and the configuration in robotConfig.
-    robotCtrl.Init("MY_BT_DEVICE", robotConfig, 4);
+    robotCtrl.Init("MY_BT_DEVICE", robotConfig, 2);
     ...
 }
 ```
