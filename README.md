@@ -17,7 +17,7 @@ CONFIG_BT_CONTROLLER_ENABLED=y
 
 ```c
 
-// Definimos nuestro Bluetooth Robot Controller
+// Create our controller
 BtRobotController& robotCtrl = BtRobotController::getBtRobotController();
 
 uint32_t callBack1(void * data, uint32_t len, BtRobotOperationType operation)
@@ -86,4 +86,4 @@ extern "C" void app_main()
 
 ### Video tutorial
 
-21-oct-2023, 1h20 New Document
+21-oct-2023, 1h20
